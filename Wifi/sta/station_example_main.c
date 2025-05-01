@@ -14,11 +14,12 @@
 #define SERVER_PORT 3333
 static const char *TAG = "TCP_SERVER";
 static const char *TAG_STA = "WIFI_STA";
-//static const char *ID = "sensor1";
 
 struct packet{
-	int64_t tiempo_envio;
+	int64_t tiempo_server;
 	char id[8];
+	double coordx;
+	double coordy;
 };
 
 // Configuración Wifi
@@ -27,15 +28,20 @@ struct packet{
 
 // Mensajes TCP
 #define RTT_RESPONSE "RTT Response"
+#define ID "sensor2"
+#define COORDX 40.5
+#define COORDY 3.3
 
 void tcp_server_task(void *pvParameters){
-	//char rx_buffer[sizeof(struct packet)];
+	//char rx_buffer[sizeof(struct packet)
 	char rx_buffer[128];
 	char addr_str[128];
 	struct sockaddr_in dest_addr;
 	int addr_family = AF_INET;
 	int ip_protocol = IPPROTO_IP;
 	struct timeval tiempo_recibo, tiempo_reenvio;
+	char first_message[sizeof(struct packet)];
+	struct packet *mensaje= (struct packet*) first_message;
 
 	int listen_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
 	if(listen_sock < 0) {
@@ -78,8 +84,12 @@ void tcp_server_task(void *pvParameters){
 		}
 		ESP_LOGI(TAG, "%s enviado", RTT_RESPONSE);
 		int64_t diferencia = ((int64_t)tiempo_reenvio.tv_sec*1e6 + (int64_t)tiempo_reenvio.tv_usec) - ((int64_t)tiempo_recibo.tv_sec*1e6 + (int64_t)tiempo_recibo.tv_usec);
+		mensaje->tiempo_server = diferencia;
+		strncpy(mensaje->id, ID, strlen(ID));
+		mensaje->coordx = COORDX;
+		mensaje->coordy = COORDY;
 		ESP_LOGI(TAG, "Enviando tiempo en servidor %lld", diferencia);
-		err = send(sock, &diferencia, sizeof(diferencia), 0);
+		err = send(sock, &first_message, sizeof(first_message), 0);
 		if (err<0){
 			ESP_LOGE(TAG, "Error al enviar el tiempo: errno %d", errno);
 		}
