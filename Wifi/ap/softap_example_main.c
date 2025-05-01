@@ -9,15 +9,19 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
+#include <math.h>
 
 #define SERVER_PORT 3333
 static const char *TAG = "TCP_CLIENT";
 static const char *TAG_IP = "IP_EVENT";
 static const char *TAG_AP = "WIFI_AP";
+static const char *TAG_DIST = "POSICION";
 
 struct packet{
-	int64_t tiempo_envio;
+	int64_t tiempo_server;
 	char id[8];
+	double coordx;
+	double coordy;
 };
 // Configuración AP
 #define AP_SSID "ESP32_AP"
@@ -27,11 +31,30 @@ struct packet{
 #define MAX_CLIENTES 4
 static esp_ip4_addr_t ip_clientes[MAX_CLIENTES];
 static int num_clientes = 0;
-
+static float apcoordx, apcoordy, coordenadas[MAX_CLIENTES][3]; // La estructura es coordx, coordy, distancia
 // Mensajes TCP
 #define RTT_QUERY "RTT Query"
 
+void calcula_posicion_task(void *pvParameters){
+	float A, B, C, D, E, F, denominador;
+	A = 2*(coordenadas[0][0] - coordenadas[1][0]); //2*(x_1 - x_2)
+	B = 2*(coordenadas[0][1] - coordenadas[1][1]); //2*(y_1 - y_2)
+	C = pow(coordenadas[0][2],2) - pow(coordenadas[1][2],2) - pow(coordenadas[0][0],2) + pow(coordenadas[1][0],2) - pow(coordenadas[0][1],2) + pow(coordenadas[1][1],2);
+	
+	D = 2*(coordenadas[0][0] - coordenadas[2][0]); //2*(x_1 - x_3)
+	E = 2*(coordenadas[0][1] - coordenadas[2][1]); //2*(y_1 - y_3)
+	F = pow(coordenadas[0][2],2) - pow(coordenadas[2][2],2) - pow(coordenadas[0][0],2) + pow(coordenadas[2][0],2) - pow(coordenadas[0][1],2) + pow(coordenadas[2][1],2);
+	denominador = (A*E-B*D);
+	if(fabs(denominador)< 1e-6){
+		ESP_LOGE(TAG_DIST, "No se puede resolver (división por cero)");
+		vTaskDelete(NULL);
+		return;
+	}
+	apcoordx = (C*E-F*B)/denominador;
+	apcoordy = (A*F-D*C)/denominador;
 
+	vTaskDelete(NULL);
+}
 void tcp_client_task(void *pvParameters){
 	esp_ip4_addr_t server_ip = ip_clientes[num_clientes-1];
 	struct sockaddr_in dest_addr;
@@ -42,7 +65,8 @@ void tcp_client_task(void *pvParameters){
 	// Para medir el RTT hacemos un timestamp al enviar y  otro al recibir el mensaje
 	struct timeval tiempo_envio, tiempo_recibo;
 
-	char rx_buffer[128];
+	char rx_buffer[sizeof(struct packet)];
+	struct packet *rx_pkt = (struct packet*) rx_buffer;
 	
 	int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
 	if (sock < 0){
@@ -73,13 +97,19 @@ void tcp_client_task(void *pvParameters){
 		if(strncmp("RTT Response", rx_buffer, strlen("RTT Response")-1) == 0){
 			int64_t tiempo_total = ((int64_t)tiempo_recibo.tv_sec*1e6 + (int64_t)tiempo_recibo.tv_usec) - ((int64_t)tiempo_envio.tv_sec*1e6 + (int64_t)tiempo_envio.tv_usec);
 			// Recibimos el tiempo en otro paquete
-			int64_t tiempo_en_server;
-			len = recv(sock, &tiempo_en_server, sizeof(tiempo_en_server), 0);
+			len = recv(sock, &rx_buffer, sizeof(rx_buffer), 0);
 			if (len>0){
-				int64_t diferencia = ((int64_t)tiempo_recibo.tv_sec*1e6 + (int64_t)tiempo_recibo.tv_usec) - ((int64_t)tiempo_envio.tv_sec*1e6 + (int64_t)tiempo_envio.tv_usec) - tiempo_en_server;
+				int64_t diferencia = ((int64_t)tiempo_recibo.tv_sec*1e6 + (int64_t)tiempo_recibo.tv_usec) - ((int64_t)tiempo_envio.tv_sec*1e6 + (int64_t)tiempo_envio.tv_usec) - rx_pkt->tiempo_server;
 				double distancia = 3e8*diferencia/(2*1e6);
-				ESP_LOGI(TAG, "Tiempo total: %lld; Tiempo en servidor: %lld", tiempo_total, tiempo_en_server);
-				ESP_LOGI(TAG, "Tiempo: %lld Distancia %g m", diferencia, distancia);
+				ESP_LOGI(TAG, "Tiempo total: %lld; Tiempo en servidor: %lld", tiempo_total, rx_pkt->tiempo_server);
+				ESP_LOGI(TAG, "Tiempo: %lld Distancia %g m, sensor: %s", diferencia, distancia, rx_pkt->id);
+				coordenadas[num_clientes][0] = rx_pkt->coordx;
+				coordenadas[num_clientes][1] = rx_pkt->coordy;
+				coordenadas[num_clientes][2] = distancia;
+				if(num_clientes == 1)
+					xTaskCreate(calcula_posicion_task, "tcp_client", 4096, NULL, 5, NULL);
+				else
+					ESP_LOGI("N_clientes", "Se ha guardado cliente %d", num_clientes);
 			}
 		}
 
@@ -95,11 +125,12 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t eve
 	if(event_id == IP_EVENT_AP_STAIPASSIGNED){
 		ip_event_ap_staipassigned_t *event = (ip_event_ap_staipassigned_t*) event_data;
 		if (num_clientes < MAX_CLIENTES){
-			ip_clientes[num_clientes++] = event->ip;
+			ip_clientes[num_clientes] = event->ip;
 			ESP_LOGI(TAG_IP, "Se ha conectado una nueva estación con IP " IPSTR, IP2STR(&event->ip));
 			//xTaskCreate(tcp_client_task, "tcp_client", 4096, event->ip, 5, NULL);
 			vTaskDelay(pdMS_TO_TICKS(5000)); // Espero a que se conecte el sta
 			xTaskCreate(tcp_client_task, "tcp_client", 4096, NULL, 5, NULL);
+			num_clientes++; // Una vez terminado todo actualizamos el número de clientes
 		} else {
 			ESP_LOGE(TAG_IP, "Número máximo de clientes alcanzado");
 		}
