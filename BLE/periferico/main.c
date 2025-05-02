@@ -27,8 +27,16 @@ static uint8_t ext_adv_pattern_1[] = {
 #endif
 
 static const char *tag = "BLE_PERIFERICO";
-static const char *identificador = "sensor-1";
+static const char *identificador = "sensor-2";
+static const double coordx = 40.5;
+static const double coordy = 3.3;
 //static char distancia[10] = {};
+
+struct packet{
+	char id[8];
+	double coordx;
+	double coordy;
+};
 
 // Definimos los uuid-128 de los servicios que vamos a crear
 static const ble_uuid128_t servicio_uuid = BLE_UUID128_INIT(0x01, 0x96, 0x43, 0x35, 0x6c, 0x13, 0x7b, 0xb3, 0x9b, 0x1d, 0xf6, 0x7a, 0x54, 0xfc, 0xf5, 0x9f);
@@ -240,10 +248,15 @@ ble_prox_prph_gap_event(struct ble_gap_event *event, void *arg)
 static int ble_gatt_svc_handler(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg){
 	const ble_uuid_t *uuid = ctxt->chr->uuid;
 	double * distancia;
+	char tx_buffer[sizeof(struct packet)];
+	struct packet *id_coords = (struct packet*) tx_buffer;
 
+	strncpy(id_coords->id, identificador, strlen(identificador));
+	id_coords->coordx = coordx;
+	id_coords->coordy = coordy;
 	if(ble_uuid_cmp(uuid, &id_chr_uuid.u) == 0){
 		MODLOG_DFLT(INFO, "El central quiere leer el id del periférico");
-		os_mbuf_append(ctxt->om, identificador, strlen(identificador));
+		os_mbuf_append(ctxt->om, tx_buffer, sizeof(tx_buffer));
 		return 0;
 	} else if (ble_uuid_cmp(uuid, &distancia_chr_uuid.u) == 0){
 		MODLOG_DFLT(INFO, "Está intentando modificar la distancia");
