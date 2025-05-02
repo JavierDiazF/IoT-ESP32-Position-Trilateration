@@ -21,6 +21,15 @@
 struct ble_id_distance_t{
 	char identificador[8];
 	uint16_t distancia_handler;
+	double distancia;
+	double coordx;
+	double coordy;
+};
+
+struct packet{
+	char id[8];
+	double coordx;
+	double coordy;
 };
 
 static const char *tag = "BLE_CENTRAL";
@@ -31,7 +40,10 @@ static struct ble_prox_cent_conn_peer conn_peer[MYNEWT_VAL(BLE_MAX_CONNECTIONS) 
 static struct ble_prox_cent_link_lost_peer disconn_peer[MYNEWT_VAL(BLE_MAX_CONNECTIONS) + 1];
 // PARA ID Y DISTANCIA
 static struct ble_id_distance_t id_dist_conn_peer[MYNEWT_VAL(BLE_MAX_CONNECTIONS) + 1];
-static char identificador_ble[8];
+static int num_clientes;
+static double centcoordx;
+static double centcoordy;
+//static char identificador_ble[8];
 
 /* Note: Path loss is calculated using formula : threshold - RSSI value
  *       by default threshold is kept -128 as per the spec
@@ -50,11 +62,39 @@ void ble_store_config_init(void);
 static void ble_prox_cent_scan(void);
 static int ble_prox_cent_gap_event(struct ble_gap_event *event, void *arg);
 
+void calcula_posicion_task(void *pvParameters){
+        float A, B, C, D, E, F, denominador;
+        // Esto es por las pruebas con 2 esp32. Cuando tenga 3 se puede quitar
+        if (num_clientes == 1){
+                id_dist_conn_peer[num_clientes+1].coordx = 20.0;
+                id_dist_conn_peer[num_clientes+1].coordy = 5.0;
+                id_dist_conn_peer[num_clientes+1].distancia = 100.0;
+        }
+        A = 2*(id_dist_conn_peer[0].coordx - id_dist_conn_peer[1].coordx); //2*(x_1 - x_2)
+        B = 2*(id_dist_conn_peer[0].coordy - id_dist_conn_peer[1].coordy); //2*(y_1 - y_2)
+        C = pow(id_dist_conn_peer[0].distancia,2) - pow(id_dist_conn_peer[1].distancia,2) - pow(id_dist_conn_peer[0].coordx,2) + pow(id_dist_conn_peer[1].coordx,2) - pow(id_dist_conn_peer[0].coordy,2) + pow(id_dist_conn_peer[1].coordy,2);
+
+        D = 2*(id_dist_conn_peer[0].coordx - id_dist_conn_peer[2].coordx); //2*(x_1 - x_3)
+        E = 2*(id_dist_conn_peer[0].coordy - id_dist_conn_peer[2].coordy); //2*(y_1 - y_3)
+        F = pow(id_dist_conn_peer[0].distancia,2) - pow(id_dist_conn_peer[2].distancia,2) - pow(id_dist_conn_peer[0].coordx,2) + pow(id_dist_conn_peer[2].coordx,2) - pow(id_dist_conn_peer[0].coordy,2) + pow(id_dist_conn_peer[2].coordy,2);
+        denominador = (A*E-B*D);
+        if(fabs(denominador)< 1e-6){
+                MODLOG_DFLT(ERROR, "No se puede resolver (división por cero)");
+                vTaskDelete(NULL);
+                return;
+        }
+        centcoordx = (C*E-F*B)/denominador;
+        centcoordy = (A*F-D*C)/denominador;
+        MODLOG_DFLT(INFO, "Coordenadas x: %g, y: %g", centcoordx, centcoordy);
+
+        vTaskDelete(NULL);
+}
+
 static int
 ble_prox_cent_on_read(uint16_t conn_handle,
                       const struct ble_gatt_error *error,
                       struct ble_gatt_attr *attr,
-                      void *arg)
+                     void *arg)
 {
     MODLOG_DFLT(INFO, "Read on tx power level char completed; status=%d "
                 "conn_handle=%d\n",
@@ -68,28 +108,20 @@ ble_prox_cent_on_read(uint16_t conn_handle,
 
     return 0;
 }
-/*
-// Y AQUÍ ME HAGO EL CÓDIGO PARA LEER LAS CARACTERÍSITICAS QUE HE CREADO
-static int ble_distance_cent_read(uint16_t conn_handle, const struct ble_gatt_error *error, struct ble_gatt_attr *attr, void *arg){
-	MODLOG_DFLT(INFO, "Leyendo la distancia del sensor; status=%d, conn_handle=%d", error->status, conn_handle);
-	if (error->status == 0){
-		MODLOG_DFLT(INFO, " attr_handle=%d value=", attr->handle);
-		print_mbuf(attr->om);
-		os_mbuf_copydata(attr->om, 0, attr->om->om_len, &distancia_ble);
-		id_dist_conn_peer[conn_handle].distancia = distancia_ble;
-	}
-	return 0;
-}
-*/
 
 // Y AQUÍ ME HAGO EL CÓDIGO PARA LEER LAS CARACTERÍSTICAS QUE HE CREADO
 static int ble_id_cent_read(uint16_t conn_handle, const struct ble_gatt_error *error, struct ble_gatt_attr *attr, void *arg){
 	MODLOG_DFLT(INFO, "Leyendo el id del sensor; status=%d, conn_handle=%d", error->status, conn_handle);
 	if (error->status == 0){
+		char rx_buffer[sizeof(struct packet)];
+		struct packet *rx_pkt = (struct packet*) rx_buffer;
 		MODLOG_DFLT(INFO, " attr_handle=%d value=", attr->handle);
-		print_mbuf(attr->om);
-		os_mbuf_copydata(attr->om, 0, attr->om->om_len, &identificador_ble);
-		strncpy(id_dist_conn_peer[conn_handle].identificador, identificador_ble, sizeof(identificador_ble));
+		//print_mbuf(attr->om);
+		os_mbuf_copydata(attr->om, 0, attr->om->om_len, &rx_buffer);
+		strncpy(id_dist_conn_peer[conn_handle].identificador, rx_pkt->id, sizeof(rx_pkt->id));
+		id_dist_conn_peer[conn_handle].coordx = rx_pkt->coordx;
+		id_dist_conn_peer[conn_handle].coordy = rx_pkt->coordy;
+		MODLOG_DFLT(INFO, "Guardado sensor %s en coordenadas: %g, %g", id_dist_conn_peer[conn_handle].identificador, id_dist_conn_peer[conn_handle].coordx, id_dist_conn_peer[conn_handle].coordy);
 	}
 	return 0;
 }
@@ -127,19 +159,7 @@ ble_prox_cent_on_write(uint16_t conn_handle,
                     rc);
         goto err;
     }
-    /*
-    // AHORA VOY A BUSCCAR LOS HANDLERS QUE HE CREADO DISTANCIA
-    chr = peer_chr_find_uuid(peer, &servicio_uuid.u, &distancia_chr_uuid.u);
-    if (chr == NULL) {
-	    MODLOG_DFLT(ERROR, "Error al encontrar las características distancia");
-	    goto err;
-    }
-    rc = ble_gattc_read(conn_handle, chr->chr.val_handle, ble_distance_cent_read, NULL);
-    if (rc != 0){
-	    MODLOG_DFLT(ERROR, "Error al leer la distancia rc=%d", rc);
-	    goto err;
-    }
-    */
+
     // AHORA VOY A BUSCCAR LOS HANDLERS QUE HE CREADO ID
     chr = peer_chr_find_uuid(peer, &servicio_uuid.u, &id_chr_uuid.u);
     if (chr == NULL) {
@@ -650,7 +670,6 @@ ble_prox_cent_path_loss_task(void *pvParameters)
     int8_t rssi;
     int rc;
     int path_loss;
-    double distancia;
 
     while (1) {
         for (int i = 0; i <= MYNEWT_VAL(BLE_MAX_CONNECTIONS); i++) {
@@ -665,9 +684,9 @@ ble_prox_cent_path_loss_task(void *pvParameters)
 
                 path_loss = tx_pwr_lvl - rssi;
                 MODLOG_DFLT(INFO, "path loss = %d pwr lvl = %d rssi = %d", path_loss, tx_pwr_lvl, rssi);
-		distancia = pow(10.0, ((float)(MEASURED_PWR - rssi)) / (10.0*N));
-		MODLOG_DFLT(INFO, "Distancia al sensor %s: %g", id_dist_conn_peer[i].identificador, distancia);
-		rc = ble_gattc_write_no_rsp_flat(i, id_dist_conn_peer[i].distancia_handler, &distancia, sizeof(distancia));
+		id_dist_conn_peer[i].distancia = pow(10.0, ((float)(MEASURED_PWR - rssi)) / (10.0*N));
+		MODLOG_DFLT(INFO, "Distancia al sensor %s: %g", id_dist_conn_peer[i].identificador, id_dist_conn_peer[i].distancia);
+		rc = ble_gattc_write_no_rsp_flat(i, id_dist_conn_peer[i].distancia_handler, &id_dist_conn_peer[i].distancia, sizeof(id_dist_conn_peer[i].distancia));
 		if (rc != 0){
 			MODLOG_DFLT(ERROR, "Error al escribir la distancia; rc=%d", rc);
 		} else {
@@ -690,9 +709,15 @@ ble_prox_cent_path_loss_task(void *pvParameters)
                         MODLOG_DFLT(INFO, "Write to alert level characteristis done");
                     }
                 }
+	    	if (i == 1){ //Tengo 2 dispositivos conectados
+			num_clientes = i;
+			MODLOG_DFLT(INFO, "Se han encontrado %d dispositivos. Se procede a calcular la posicion", num_clientes+1);
+			xTaskCreate(calcula_posicion_task, "ble_central", 4096, NULL, 5, NULL);
+	    	}
             }
         }
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        //vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
     }
 }
 

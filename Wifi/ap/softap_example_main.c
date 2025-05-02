@@ -37,6 +37,12 @@ static float apcoordx, apcoordy, coordenadas[MAX_CLIENTES][3]; // La estructura 
 
 void calcula_posicion_task(void *pvParameters){
 	float A, B, C, D, E, F, denominador;
+	// Esto es por las pruebas con 2 esp32. Cuando tenga 3 se puede quitar
+	if (num_clientes == 1){
+		coordenadas[2][0] = 20.0;
+		coordenadas[2][1] = 5.0;
+		coordenadas[2][2] = 100;
+	}
 	A = 2*(coordenadas[0][0] - coordenadas[1][0]); //2*(x_1 - x_2)
 	B = 2*(coordenadas[0][1] - coordenadas[1][1]); //2*(y_1 - y_2)
 	C = pow(coordenadas[0][2],2) - pow(coordenadas[1][2],2) - pow(coordenadas[0][0],2) + pow(coordenadas[1][0],2) - pow(coordenadas[0][1],2) + pow(coordenadas[1][1],2);
@@ -52,6 +58,7 @@ void calcula_posicion_task(void *pvParameters){
 	}
 	apcoordx = (C*E-F*B)/denominador;
 	apcoordy = (A*F-D*C)/denominador;
+	ESP_LOGI(TAG_DIST, "Coordenadas x: %g, y: %g", apcoordx, apcoordy);
 
 	vTaskDelete(NULL);
 }
@@ -106,7 +113,7 @@ void tcp_client_task(void *pvParameters){
 				coordenadas[num_clientes][0] = rx_pkt->coordx;
 				coordenadas[num_clientes][1] = rx_pkt->coordy;
 				coordenadas[num_clientes][2] = distancia;
-				if(num_clientes == 1)
+				if(num_clientes == 2)
 					xTaskCreate(calcula_posicion_task, "tcp_client", 4096, NULL, 5, NULL);
 				else
 					ESP_LOGI("N_clientes", "Se ha guardado cliente %d", num_clientes);
