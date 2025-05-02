@@ -65,11 +65,13 @@ static int ble_prox_cent_gap_event(struct ble_gap_event *event, void *arg);
 void calcula_posicion_task(void *pvParameters){
         float A, B, C, D, E, F, denominador;
         // Esto es por las pruebas con 2 esp32. Cuando tenga 3 se puede quitar
+	/*
         if (num_clientes == 1){
                 id_dist_conn_peer[num_clientes+1].coordx = 20.0;
                 id_dist_conn_peer[num_clientes+1].coordy = 5.0;
                 id_dist_conn_peer[num_clientes+1].distancia = 100.0;
         }
+	*/
         A = 2*(id_dist_conn_peer[0].coordx - id_dist_conn_peer[1].coordx); //2*(x_1 - x_2)
         B = 2*(id_dist_conn_peer[0].coordy - id_dist_conn_peer[1].coordy); //2*(y_1 - y_2)
         C = pow(id_dist_conn_peer[0].distancia,2) - pow(id_dist_conn_peer[1].distancia,2) - pow(id_dist_conn_peer[0].coordx,2) + pow(id_dist_conn_peer[1].coordx,2) - pow(id_dist_conn_peer[0].coordy,2) + pow(id_dist_conn_peer[1].coordy,2);
@@ -709,7 +711,7 @@ ble_prox_cent_path_loss_task(void *pvParameters)
                         MODLOG_DFLT(INFO, "Write to alert level characteristis done");
                     }
                 }
-	    	if (i == 1){ //Tengo 2 dispositivos conectados
+	    	if (i == 2){ //Tengo 3 dispositivos conectados
 			num_clientes = i;
 			MODLOG_DFLT(INFO, "Se han encontrado %d dispositivos. Se procede a calcular la posicion", num_clientes+1);
 			xTaskCreate(calcula_posicion_task, "ble_central", 4096, NULL, 5, NULL);
