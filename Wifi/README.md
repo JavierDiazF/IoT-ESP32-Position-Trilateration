@@ -1,0 +1,1 @@
+En este directorio se encuentran los archivos main.c para realizar la trilateración mediante WiFi. Para su ejecución descargar el ejemplo `examples/wifi/getting_started` del ESP-IDF y cargar los documentos aquí alojados en la carpeta main de dichos ejemplos.
